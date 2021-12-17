@@ -13,7 +13,7 @@ def mask_gen(i,basis,M):
     size_basis = len(basis)
 
     mask = np.ones(size_basis, dtype = bool)
-    mask[i] = False 
+    mask[i] = False
 
     for j in range(len(basis)):
         test = np.array(basis[i]) - np.array(basis[j])
@@ -27,7 +27,7 @@ def mask_gen(i,basis,M):
 
 def GL_terms(basis,mask,lorentz_weights,epsilon,PATH):
 # the gain and loss matrices involved in the master equation
-# CAREFUL ! The gain and loss matrices are normalized using the mask, 
+# CAREFUL ! The gain and loss matrices are normalized using the mask,
 # but irrelevant elements (i.e. not MpMh escitations) are not set to 0 !
 # the matrix elements are chosen to be lorentzian functions of th energy with a constant gamma and a V equal to 1
 
@@ -49,7 +49,7 @@ def GL_terms(basis,mask,lorentz_weights,epsilon,PATH):
 
     filename = PATH+"gl_terms.dat"
 
-# some lines of code to insure no problem arise if the new file do not already exists
+# some lines of code to2 insure no problem arise if the new file do not already exists
 
     if not os.path.exists(os.path.dirname(filename)):
         try:
@@ -57,14 +57,14 @@ def GL_terms(basis,mask,lorentz_weights,epsilon,PATH):
         except OSError as exc: # Guard against race condition
             if exc.errno != errno.EEXIST:
                 raise
-    
+
     f = open(filename, 'wb')
     np.savetxt(f, Gain)
     f.close()
 
     return Gain, Loss
 
-def lorentz(basis,epsilon,N):
+def lorentz(basis,epsilon,N,A):
 # calculate the lorentzian weight associated to a jump
 
     size_basis = len(basis)
@@ -73,52 +73,50 @@ def lorentz(basis,epsilon,N):
     for i in range(size_basis):
 #        print(np.array(basis[i]))
 #        print(np.array(np.where(np.array(basis[i]) == 1.)).flatten())
-        mbenergies[i] = np.sum(epsilon * np.array(np.where(np.array(basis[i]) == 1.)).flatten()) # calculation of the energy of each many body state
+        mbenergies[i] = np.sum(epsilon * np.arange(0,A) * basis[i,:]) # calculation of the energy of each many body state
 
+#    print('ener', mbenergies)
 
-# ok so the idea is to construct a tensor gamma but this will yield something of the size A**4 which will be gigantic
-# using sparce matrices i think it will be easier but the way it will work is not clear in comparison to the newaxis method of numpy
-#    diff = np.array(basis)[np.newaxis,:] - np.array(basis)[:,np.newaxis]
-    gamma = width_lorentz(basis,epsilon,N) # calculation of gamma
+    gamma = width_lorentz(basis,epsilon,N,A) # calculation of gamma
+    lorentz = np.zeros((len(basis),len(basis)))
 
-    lorentz = gamma / ((mbenergies[:,np.newaxis] - mbenergies[np.newaxis,:])**2. + (gamma/2.)**2.) # each gain and loss terms are given by lorentzian matrices, assuming V = 1
-    np.fill_diagonal(lorentz,0.) # the state does not interact with itself
-#    print(lorentz) 
-    lorentz = lorentz / (2. * np.pi)
+    DE = mbenergies[np.newaxis,:] - mbenergies[:,np.newaxis]
+
+    cutoff = 10.**(-10.)
+    for i in range(len(basis)):
+#        for j in range(len(basis)):
+#            if gamma[i] <= cutoff and np.abs(DE[i,j]) <= cutoff: #if gamma is near zeero then we have a dirac delta function as per the fermi golden rule
+#                lorentz[i,j] = 1.
+#            elif gamma[i] <= cutoff and np.abs(DE[i,j]) >= cutoff:
+#                lorentz[i,j] = 0.
+#            else:
+#                lorentz[i,j] = 1. / (2. * np.pi) * gamma[j] / (DE[i,j]**2. + (gamma[j]/2.)**2.)
+
+    # here i try to use a gaussian instead of a lorentzian distribution so that i hopefully may have no problems with big basis anymore
+    #            width = np.sqrt(7.) * gamma[j]
+    #            lorentz[i,j] = np.sqrt(2. * np.pi * width**2.)**(-1.) * np.exp(- DE[i,j]**2. / (2. * width**2.))
+
+    # here i try to be un gros bourrin with heaviside
+        lorentz[:,i] = np.heaviside(DE[:,i] + gamma[:] / 2. ,1.) - np.heaviside(DE[:,i] - gamma[:] / 2.,1.)
 
     return lorentz
 
-def width_lorentz(basis,epsilon,N): 
-# calculation of width of lorentzian weight
-# here i assume the Bohr Mottelson Vol. 1 hypotheses are valid (see pages 302-304)
-# i have to change it, bertsch is supposed to be more realistic => we'll do with the Pines Nozieres 
-# in the end i just assume as in P and N that the total width is the sum of the particle or hole widths which are proportional to (energy - fermi energy)**2 * a cutoff according to Bertsch 
+def width_lorentz(basis,epsilon,N,A):
+# calculation of width of the final states
+# they are supposed to be exact, but since we don't know them we have to use a prescription to compute them.
+# Parameters will be adjusted one day :)
 
-    fermi_energy = N * (N + 1.) / 2. * epsilon
-    
-#    diff = np.array(basis)[:,np.newaxis] - np.array(basis)[np.newaxis,:]
-#    diff = 
-    gamma = np.zeros((len(basis),len(basis)))
-    cutoff = 4. *  epsilon
-    for i in range(len(basis)): # pas mega efficace le calcul là
-        for j in range(i):
-#        for j in range(len(basis)):
-            diff = np.array(basis[i]) - np.array(basis[j])
-#            print(i,j)
-            posindex = np.array(np.where(np.array(diff) == 1.)).flatten()
-            negindex = np.array(np.where(np.array(diff) == -1.)).flatten()
-            for k in range(len(posindex)):
-                x = (posindex[k] * epsilon - fermi_energy)**2.
-                #print(x * np.exp(-x),i,j,k)
-                gamma[i,j] = gamma[i,j] + x * np.exp(-x/(2. * cutoff**2.))
-            for k in range(len(negindex)):
-                x = (negindex[k] * epsilon - fermi_energy)**2.
-                gamma[i,j] = gamma[i,j] + x * np.exp(-x/(2. * cutoff**2.))
-            gamma[j,i] = gamma[i,j]
-#        print(gamma[i,i])
- #   gamma = 0.
- #   for i in range(len(posindex)):
-            
- #   gamma = 2. * np.pi  / epsilon
-#    gamma = 1.
+    gs_energy = N * (N + 1.) / 2. * epsilon # ground state energy
+    gamma = np.zeros(len(basis))
+    print('gs=', gs_energy)
+    a = 1.
+    b = 0.5
+#    b = 1.
+
+    diff = epsilon * np.sum(np.arange(0,A)[np.newaxis,:] * basis, axis = 1) - gs_energy
+    diff = diff**2.
+    gamma = a * diff * np.exp(- b * diff)
+#    gamma = np.zeros(len(basis))
+#    print(np.shape(gamma),'size gamma')
+
     return gamma
